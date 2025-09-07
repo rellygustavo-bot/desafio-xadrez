@@ -1,0 +1,233 @@
+#include <stdio.h>
+#include <string.h>
+#include <ctype.h>
+
+/*
+  Xadrez em C â€” versÃ£o de console (em portuguÃªs)
+  Recursos:
+  - MovimentaÃ§Ã£o completa: peÃ£o, torre, cavalo, bispo, dama e rei
+  - ValidaÃ§Ã£o de jogadas (nÃ£o permite mover para casa ocupada por peÃ§a da mesma cor)
+  - NÃ£o permite deixar o prÃ³prio rei em xeque
+  - DetecÃ§Ã£o de xeque, xeque-mate e afogamento (empate)
+  - PromoÃ§Ã£o automÃ¡tica de peÃ£o para dama
+  - Entrada de jogada no formato: e2e4, g7g8, a7a8q (q/t/b/c para promover â€” opcional; padrÃ£o Dama)
+
+  LimitaÃ§Ãµes:
+  - Sem roque
+  - Sem en passant
+  - Sem regra dos 50 lances nem repetiÃ§Ã£o de posiÃ§Ã£o
+*/
+
+#define TAM 8
+
+static char tabuleiro[TAM][TAM];
+
+/* Utilidades */
+int dentro(int l, int c){ return l>=0 && l<TAM && c>=0 && c<TAM; }
+int vazio(int l, int c){ return tabuleiro[l][c] == ' '; }
+int eh_branca(char p){ return p>='A' && p<='Z'; }
+int eh_preta(char p){ return p>='a' && p<='z'; }
+int mesma_cor(char a, char b){ if(a==' '||b==' ') return 0; return (eh_branca(a)&&eh_branca(b)) || (eh_preta(a)&&eh_preta(b)); }
+
+void inicializar(){
+    const char *inicio[8] = {
+        "rnbqkbnr",
+        "pppppppp",
+        "        ",
+        "        ",
+        "        ",
+        "        ",
+        "PPPPPPPP",
+        "RNBQKBNR"
+    };
+    for(int l=0;l<8;l++) for(int c=0;c<8;c++) tabuleiro[l][c] = inicio[l][c];
+}
+
+void imprimir(){
+    printf("\n    a b c d e f g h\n");
+    printf("   -----------------\n");
+    for(int l=0;l<8;l++){
+        printf("%d | ", 8-l);
+        for(int c=0;c<8;c++){
+            char p = tabuleiro[l][c];
+            printf("%c ", p==' ' ? '.' : p);
+        }
+        printf("| %d\n", 8-l);
+    }
+    printf("   -----------------\n");
+    printf("    a b c d e f g h\n\n");
+}
+
+int algebra_para_lc(const char *alg, int *l, int *c){
+    if(!isalpha(alg[0])||!isdigit(alg[1])) return 0;
+    int coluna = tolower(alg[0]) - 'a';
+    int linha = alg[1]-'1';
+    if(coluna<0||coluna>7||linha<0||linha>7) return 0;
+    *l = 7-linha;
+    *c = coluna;
+    return 1;
+}
+
+int caminho_livre(int l1,int c1,int l2,int c2){
+    int dl = (l2>l1) - (l2<l1);
+    int dc = (c2>c1) - (c2<c1);
+    int l=l1+dl, c=c1+dc;
+    while(l!=l2 || c!=c2){
+        if(!vazio(l,c)) return 0;
+        l+=dl; c+=dc;
+    }
+    return 1;
+}
+
+int casa_atacada(int tl,int tc, int atacante_branco){
+    for(int l=0;l<8;l++){
+        for(int c=0;c<8;c++){
+            char p = tabuleiro[l][c];
+            if(p==' ') continue;
+            if(atacante_branco && !eh_branca(p)) continue;
+            if(!atacante_branco && !eh_preta(p)) continue;
+            int dl = tl - l, dc = tc - c;
+            int adl = dl>0?dl:-dl, adc = dc>0?dc:-dc;
+            switch(tolower(p)){
+                case 'p': {
+                    int dir = eh_branca(p) ? -1 : 1;
+                    if(dl==dir && (dc==1 || dc==-1)) return 1;
+                    break;
+                }
+                case 'n': if((adl==2 && adc==1) || (adl==1 && adc==2)) return 1; break;
+                case 'b': if(adl==adc && caminho_livre(l,c,tl,tc)) return 1; break;
+                case 'r': if((l==tl||c==tc) && caminho_livre(l,c,tl,tc)) return 1; break;
+                case 'q': if(((adl==adc)||(l==tl||c==tc)) && caminho_livre(l,c,tl,tc)) return 1; break;
+                case 'k': if(adl<=1 && adc<=1) return 1; break;
+            }
+        }
+    }
+    return 0;
+}
+
+int em_xeque(int brancas){
+    char rei = brancas ? 'K' : 'k';
+    int rl=-1,rc=-1;
+    for(int l=0;l<8;l++) for(int c=0;c<8;c++) if(tabuleiro[l][c]==rei){ rl=l; rc=c; }
+    if(rl==-1) return 1;
+    return casa_atacada(rl,rc, !brancas);
+}
+
+int peca_pode_mover(int l1,int c1,int l2,int c2){
+    char p = tabuleiro[l1][c1];
+    if(p==' ') return 0;
+    if(!dentro(l2,c2)) return 0;
+    if(mesma_cor(tabuleiro[l1][c1], tabuleiro[l2][c2])) return 0;
+    int dl = l2-l1, dc = c2-c1;
+    int adl = dl>0?dl:-dl, adc = dc>0?dc:-dc;
+    switch(tolower(p)){
+        case 'p': {
+            int dir = eh_branca(p) ? -1 : 1;
+            int inicio = eh_branca(p) ? 6 : 1;
+            if(dc==0 && dl==dir && vazio(l2,c2)) return 1;
+            if(dc==0 && l1==inicio && dl==2*dir && vazio(l1+dir,c1) && vazio(l2,c2)) return 1;
+            if(adc==1 && dl==dir && !vazio(l2,c2) && !mesma_cor(p, tabuleiro[l2][c2])) return 1;
+            return 0;
+        }
+        case 'n': return (adl==2 && adc==1) || (adl==1 && adc==2);
+        case 'b': return (adl==adc) && caminho_livre(l1,c1,l2,c2);
+        case 'r': return ((l1==l2)||(c1==c2)) && caminho_livre(l1,c1,l2,c2);
+        case 'q': return (((l1==l2)||(c1==c2)) || (adl==adc)) && caminho_livre(l1,c1,l2,c2);
+        case 'k': return (adl<=1 && adc<=1);
+    }
+    return 0;
+}
+
+void fazer_jogada(int l1,int c1,int l2,int c2, char promo){
+    char p = tabuleiro[l1][c1];
+    tabuleiro[l2][c2] = p;
+    tabuleiro[l1][c1] = ' ';
+    if(tolower(p)=='p'){
+        if(l2==0 && eh_branca(p)) tabuleiro[l2][c2] = (promo? toupper(promo) : 'Q');
+        if(l2==7 && eh_preta(p)) tabuleiro[l2][c2] = (promo? tolower(promo) : 'q');
+    }
+}
+
+int jogada_legal(int l1,int c1,int l2,int c2, int turno_brancas, char promo){
+    if(!dentro(l1,c1)||!dentro(l2,c2)) return 0;
+    char p = tabuleiro[l1][c1];
+    if(p==' ') return 0;
+    if(turno_brancas && !eh_branca(p)) return 0;
+    if(!turno_brancas && !eh_preta(p)) return 0;
+    if(!peca_pode_mover(l1,c1,l2,c2)) return 0;
+    char de = tabuleiro[l1][c1];
+    char para = tabuleiro[l2][c2];
+    fazer_jogada(l1,c1,l2,c2,promo);
+    int xeque = em_xeque(turno_brancas);
+    tabuleiro[l1][c1] = de;
+    tabuleiro[l2][c2] = para;
+    return !xeque;
+}
+
+int tem_jogada_legal(int turno_brancas){
+    for(int l1=0;l1<8;l1++){
+        for(int c1=0;c1<8;c1++){
+            char p = tabuleiro[l1][c1];
+            if(p==' ') continue;
+            if(turno_brancas && !eh_branca(p)) continue;
+            if(!turno_brancas && !eh_preta(p)) continue;
+            for(int l2=0;l2<8;l2++){
+                for(int c2=0;c2<8;c2++){
+                    if(jogada_legal(l1,c1,l2,c2,turno_brancas,0)) return 1;
+                }
+            }
+        }
+    }
+    return 0;
+}
+
+int interpretar(const char *s, int *l1,int *c1,int *l2,int *c2, char *promo){
+    size_t n = strlen(s);
+    if(n<4) return 0;
+    if(!algebra_para_lc(s, l1, c1)) return 0;
+    if(!algebra_para_lc(s+2, l2, c2)) return 0;
+    *promo = 0;
+    if(n>=5){
+        char pp = tolower(s[4]);
+        if(pp=='q'||pp=='r'||pp=='b'||pp=='n') *promo = pp;
+    }
+    return 1;
+}
+
+int main(){
+    inicializar();
+    int turno_brancas = 1;
+    char entrada[32];
+
+    printf("Xadrez em C (console) â€” sem roque/en passant\n");
+    printf("Digite lances: e2e4, b7b8q (promo). 'help' ou 'sair'.\n");
+
+    while(1){
+        imprimir();
+        printf("Vez das %s\n", turno_brancas?"Brancas":"Negras");
+
+        if(em_xeque(turno_brancas)){
+            if(!tem_jogada_legal(turno_brancas)){
+                printf("XEQUE-MATE! %s venceram.\n", turno_brancas?"Negras":"Brancas");
+                break;
+            } else printf("(XEQUE!)\n");
+        } else if(!tem_jogada_legal(turno_brancas)){
+            printf("AFOGAMENTO! Empate.\n");
+            break;
+        }
+
+        printf("> ");
+        if(!fgets(entrada,sizeof(entrada),stdin)) break;
+        size_t len = strlen(entrada);
+        if(len>0 && entrada[len-1]=='\n') entrada[len-1]='\0';
+        if(strcmp(entrada,"sair")==0 || strcmp(entrada,"exit")==0) break;
+        if(strcmp(entrada,"help")==0){ printf("Ex: e2e4 | e7e8q | sair\n"); continue; }
+        int l1,c1,l2,c2; char promo=0;
+        if(!interpretar(entrada,&l1,&c1,&l2,&c2,&promo)){ printf("Entrada invÃ¡lida.\n"); continue; }
+        if(!jogada_legal(l1,c1,l2,c2,turno_brancas,promo)){ printf("Jogada ilegal.\n"); continue; }
+        fazer_jogada(l1,c1,l2,c2,promo);
+        turno_brancas = !turno_brancas;
+    }
+    printf("Fim de jogo.\n");
+    return 0;
+}
